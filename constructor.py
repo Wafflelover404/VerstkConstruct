@@ -6,14 +6,13 @@ from io import BytesIO
 
 #set's the config of StApp
 st.set_page_config(layout="wide")
-margins_css = """
+st.markdown("""
 <style>
 .main > div {
     padding-bottom: 0rem;
 }
 </style>
-"""
-st.markdown(margins_css, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 #page initialization
 if 'input_page' not in st.session_state:
