@@ -3,8 +3,9 @@ import streamlit.components.v1 as components
 from PIL import Image
 import requests
 from io import BytesIO
+from requests.exceptions import RequestException
 
-#set's the config of StApp
+# set's the config of StApp
 st.set_page_config(layout="wide")
 st.markdown("""
 <style>
@@ -14,7 +15,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-#page initialization
+# page initialization
 if 'input_page' not in st.session_state:
     st.session_state.input_page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -26,6 +27,8 @@ if 'input_page' not in st.session_state:
 </body>
 </html>"""
 
+
+# gets original image resolution
 def get_image_dimensions(url):
     if url != '':
         response = requests.get(url)
@@ -34,20 +37,22 @@ def get_image_dimensions(url):
         st.session_state.form_data[1]['orig-h'] = img.height
 
 
-#finds parameters of class for form filling in editing mode
+# checks url on valid
+def is_image_url(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        return True
+    except RequestException:
+        return False
+
+
+# finds parameters of class for form filling in editing mode
 def get_class_params(page, edited_class, type):
     html, css = find_html_and_css(page, edited_class)
     if type == 'text':
         color = css[css.find("color"):]
         color = color[color.find("#"):color.find("#") + 7]
-
-        if css.find("background") > 0:
-            noBg = False
-            back = css[css.find("background"):]
-            back = back[back.find("#"):back.find("#") + 7]
-        else:
-            noBg = True
-            back = '#ffffff'
 
         if css.find("font-size") > 0:
             size = css[css.find("font-size"):]
@@ -81,8 +86,6 @@ def get_class_params(page, edited_class, type):
         st.session_state.form_data[0] = {
             'text': text,
             'color': color,
-            'noBg': noBg,
-            'bgColor': back,
             'isBold': bold,
             'isItalic': italic,
             'isUnder': under,
@@ -92,28 +95,31 @@ def get_class_params(page, edited_class, type):
         }
     elif type == 'image':
         html = html[html.find("src"):]
-        url = html[html.find("src") + 4:html.find(" ")]
-
+        url = html[html.find("src") + 4:html.find('>')]
         get_image_dimensions(url)
         orig_w = st.session_state.form_data[1]['orig_w']
         orig_h = st.session_state.form_data[1]['orig_h']
 
-        css2 = css
+        html2, css2 = find_html_and_css(page, edited_class + ' img')
         keep = False
         native = False
-        if css.find('px') > 0:
-            res_w = int(css2[css2.find("width:")+6:css2.find("px")])
-            css2 = css2[css2.find("px")+3:]
-            print(css2)
-            res_h = int(css2[css2.find("height:")+7:css2.find("px")])
+        if css2.find('px') > 0:
+            res_w = int(css2[css2.find("width:") + 6:css2.find("px")])
+            css2 = css2[css2.find("px") + 3:]
+            res_h = int(css2[css2.find("height:") + 7:css2.find("px")])
             rt = "px"
             rt_index = 0
-            res_wp = round(orig_w/res_w*100)
-            res_hp = round(orig_h/res_h*100)
-        elif css.find('%') > 0:
-            res_wp = int(css2[css2.find("width:")+6:css2.find("%")])
-            css2 = css2[css2.find("%"):]
-            res_hp = int(css2[css2.find("height:")+7:css2.find("%")])
+            res_wp = round(orig_w / res_w * 100)
+            res_hp = round(orig_h / res_h * 100)
+        elif css2.find('%') > 0:
+            res_wp = int(css2[css2.find("width:") + 6:css2.find("%")])
+            if css.find('padding') > 0:
+                width_str = css[css.find('width:'):]
+                frame_res_wp = int(width_str[width_str.find("width:") + 6:width_str.find("%")])
+                res_wp = round(100/frame_res_wp*res_wp)
+            css2 = css2[css2.find("%") + 2:]
+            print(css2)
+            res_hp = int(css2[css2.find("height:") + 7:css2.find("%")])
             rt = "%"
             rt_index = 1
             res_w = round(orig_w * res_wp / 100)
@@ -151,8 +157,74 @@ def get_class_params(page, edited_class, type):
             'align': align,
             'align-index': align_index
         }
+    if css.find("padding") > 0:
+        padding_str = css[css.find("padding:"):]
+        pad = int(padding_str[padding_str.find('padding:') + 9:padding_str.find('px')])
 
-#finds html and css of class to edit or delete it
+        width_str = css[css.find("width:"):]
+        width_str = width_str[:width_str.find(';')]
+        if width_str.find('px') > 0:
+            width_val = int(width_str[width_str.find('width:') + 7:width_str.find('px')])
+        else:
+            width_val = int(width_str[width_str.find('width:') + 7:width_str.find('%')])
+        if css.find('margin-left') > 0 and css.find('margin-right') > 0:
+            margin = 'fcenter'
+            margin_index = 1
+        elif css.find('margin-left') > 0:
+            margin = 'fright'
+            margin_index = 2
+        else:
+            margin = 'fleft'
+            margin_index = 0
+
+        if css.find("background-color") > 0:
+            back = css[css.find("background-color") + 18:css.find("background-color") + 25]
+            noBg = False
+        else:
+            noBg = True
+            back = '#ffffff'
+        if css.find("border") > 0:
+            isBorder = True
+            border = css[css.find("border:"):]
+            thick = int(border[border.find("border:") + 8: border.find('px')])
+            color = border[border.find('#'):border.find('#') + 7]
+            round_str = css[css.find("border-radius"):]
+            radius = int(round_str[round_str.find("radius:") + 8: round_str.find("px")])
+        else:
+            isBorder = False
+            thick = 2
+            color = '#000000'
+            radius = 10
+        st.session_state.form_data[2] = {
+            'frame': True,
+            'width': width_val,
+            'align': margin,
+            'align-index': margin_index,
+            'padding': pad,
+            'noBg': noBg,
+            'bg': back,
+            'border': isBorder,
+            'thick': thick,
+            'round': radius,
+            'borderColor': color
+        }
+    else:
+        st.session_state.form_data[2] = {
+            'frame': False,
+            'width': 100,
+            'align': 'fleft',
+            'align-index': 0,
+            'padding': 20,
+            'noBg': True,
+            'bg': '#ffffff',
+            'border': True,
+            'thick': 2,
+            'round': 10,
+            'borderColor': '#000000'
+        }
+
+
+# finds html and css of class to edit or delete it
 def find_html_and_css(page, obj):
     class_css = page.find(f".{obj}")
     raw_page = page[class_css:]
@@ -163,25 +235,27 @@ def find_html_and_css(page, obj):
     html_end = 0
     raw_page = page
     new_class = ""
+    if obj.endswith("img"):
+        html = None
+    else:
+        while new_class != obj:
 
-    while new_class != obj:
-
-        html_start = raw_page.find("<div")
-        html_end = raw_page.find("</div>") + 5
-        end = raw_page.find(">")
-        new_class = raw_page[html_start:end]
-        new_class = new_class[new_class.find("=") + 1:]
-        new_class = new_class.replace(" ", "")
-        if new_class == obj:
-            break
-        raw_page = raw_page[end + 1:]
-        start = raw_page.find("class")
-        end = raw_page.find(">")
-        while end < start:
+            html_start = raw_page.find("<div")
+            html_end = raw_page.find("</div>") + 5
+            end = raw_page.find(">")
+            new_class = raw_page[html_start:end]
+            new_class = new_class[new_class.find("=") + 1:]
+            new_class = new_class.replace(" ", "")
+            if new_class == obj:
+                break
             raw_page = raw_page[end + 1:]
             start = raw_page.find("class")
             end = raw_page.find(">")
-    html = raw_page[html_start-1:html_end+2]
+            while end < start:
+                raw_page = raw_page[end + 1:]
+                start = raw_page.find("class")
+                end = raw_page.find(">")
+        html = raw_page[html_start - 1:html_end + 2]
 
     return html, css
 
@@ -214,11 +288,11 @@ def find_classes(page):  # rewrite
 
 classes = find_classes(st.session_state.input_page)
 
-#creates text element with form parameters
-def create_text(text, color, noBg, bg, bold, italic, under, size, align):
+
+# creates text element with form parameters
+def create_text(text, color, bold, italic, under, size, align):
     css_string = f"\tcolor: {color};\n\ttext-align: {align};\n"
-    if not noBg:
-        css_string += f"""\tbackground: {bg};\n"""
+
     if text_size != 16:
         css_string += f"\tfont-size: {size}px;\n"
 
@@ -232,115 +306,133 @@ def create_text(text, color, noBg, bg, bold, italic, under, size, align):
     if under:
         string = string.replace("<p>", "<p><u>")
         string = string.replace("</p>", "</u></p>")
+    if isFrame:
+        css_string = add_frame('text', css_string)
     return string, css_string
 
-#creates image element with form parameters
-def create_image(new_class, url, rt, res_w, res_h, align):
+
+# creates image element with form parameters
+def create_image(url, rt, res_w, res_h, align):
     css_string = f"\ttext-align: {align};\n"
-    string = f'<img src={url} class={new_class}>'
+    string = f'<img src={url}>'
+    css_image = ''
     if not isNative:
-        css_string += f"\twidth: {res_w}{rt};\n\theight: {res_h}{rt};\n"
-    return string, css_string
+        if isFrame and rt == '%':
+            css_image = f"\twidth: {round(100/width*res_w)}%;\n\theight: {res_h}%;\n"
+        else:
+            css_image = f"\twidth: {res_w}{rt};\n\theight: {res_h}{rt};\n"
+    if isFrame:
+        css_string = add_frame('image', css_string)
+    return string, css_string, css_image
 
-#adds new class with given type
+
+# adds frame to element if needed
+def add_frame(type, css):
+    css += f"\tpadding: {padding}px;\n"
+    if type == 'text':
+        css += f"\twidth: {width}%;\n"
+    elif type == 'image':
+        if resolution_type == 'px':
+            css += f"\twidth: {width}px;\n"
+        elif resolution_type == '%':
+            css += f"\twidth: {width}%;\n"
+    if frame_alignment == 'left':
+        css += "\tmargin-right: auto;\n"
+    elif frame_alignment == 'right':
+        css += "\tmargin-left: auto;\n"
+    else:
+        css += "\tmargin-left: auto;\n"
+        css += "\tmargin-right: auto;\n"
+    if not isNoBg:
+        css += f"\tbackground-color: {background};\n"
+    if hasBorder:
+        css += f"\tborder: {thickness}px solid {borderColor};\n"
+        css += f"\tborder-radius: {rounding}px;\n"
+    return css
+
+
+# adds new class with given type
 def add_class(page, type):
     global classes
 
     new_class = 0
     if type == 'text':
-        color = color_text
-        text = text_to_add
-        if text == '':
+        if text_to_add == '':
             return
-        noBg = isNoBg
-        bg = background
-        bold = isBold
-        italic = isItalic
-        under = isUnder
-        size = text_size
-        align = alignment
-
         new_class = 'p0'
         for i in range(len(classes) - 1, -1, -1):
             if classes[i].startswith("p"):
                 new_class = 'p' + str(int(classes[i][1:]) + 1)
                 break
 
-        new_html, new_css = create_text(text, color, noBg, bg, bold, italic, under, size, align)
+        new_html, new_css = create_text(text_to_add, color_text, isBold, isItalic, isUnder, text_size, alignment)
 
     elif type == 'image':
-        url = image_url
-        if url == '':
+        if image_url == '':
             return
-        rt = resolution_type
-        if rt == 'px':
+        if resolution_type == 'px':
             res_w = st.session_state.form_data[1]['res-w']
             res_h = st.session_state.form_data[1]['res-h']
         else:
             res_w = st.session_state.form_data[1]['res-wp']
             res_h = st.session_state.form_data[1]['res-hp']
-        align = alignment
         new_class = 'i0'
         for i in range(len(classes) - 1, -1, -1):
             if classes[i].startswith("i"):
                 new_class = 'i' + str(int(classes[i][1:]) + 1)
                 break
-        new_html, new_css = create_image(new_class, url, rt, res_w, res_h, align)
+        new_html, new_css, image_css = create_image(image_url, resolution_type, res_w, res_h, alignment)
 
     new_css = f".{new_class}" + "{\n" + new_css + "}\n</style>"
     new_html = f"\t<div class={new_class}>\n\t\t{new_html}\n\t</div>\n</body>"
     page = page.replace("</style>", new_css)
     page = page.replace("</body>", new_html)
+    if image_css is not None:
+        image_css = f".{new_class} img" + "{\n" + image_css + "}\n</style>"
+        page = page.replace("</style>", image_css)
+
     classes.append(new_class)
     return page
 
-#edit class by replacing old html with new one
+
+# edit class by replacing old html with new one
 def edit_class(page, type, edited_class):
     html, css = find_html_and_css(page, edited_class)
 
     if type == 'text':
-        color = color_text
-        text = text_to_add
-        if text == '':
+        if text_to_add == '':
             return
-        noBg = isNoBg
-        bg = background
-        bold = isBold
-        italic = isItalic
-        under = isUnder
-        size = text_size
-        align = alignment
-
-        new_html, new_css = create_text(text, color, noBg, bg, bold, italic, under, size, align)
+        new_html, new_css = create_text(text_to_add, color_text, isBold, isItalic, isUnder, text_size, alignment)
 
     elif type == 'image':
-        url = image_url
-        if url == '':
+        if image_url == '':
             return
-        rt = resolution_type
-        if rt == 'px':
+        if resolution_type == 'px':
             res_w = st.session_state.form_data[1]['res-w']
             res_h = st.session_state.form_data[1]['res-h']
         else:
             res_w = st.session_state.form_data[1]['res-wp']
             res_h = st.session_state.form_data[1]['res-hp']
-        align = alignment
-        new_html, new_css = create_image(edited_class, url, rt, res_w, res_h, align)
+        new_html, new_css, image_css = create_image(image_url, resolution_type, res_w, res_h, alignment)
 
-    new_css = f".{edited_class}" + "{\n\t" + new_css + "}\n"
-    new_html = f"\t<div class={edited_class}>\n\t\t{new_html}\n\t</div>\n"
-
-    page = page.replace(css, new_css)
+    new_css = f".{edited_class}" + "{\n" + new_css + "}\n</style>"
+    new_html = f"\t<div class={edited_class}>\n\t\t{new_html}\n\t</div>\n</body>"
     page = page.replace(html, new_html)
+    if image_css is not None:
+        image_css = f".{edited_class} img" + "{\n" + image_css + "}\n</style>"
+        new_css += image_css
+    page = page.replace(html, new_css)
     return page
 
-#deletes html of given class
+
+# deletes html of given class
 def delete_class(page, html, css):
     page = page.replace(css, "")
     page = page.replace(html, "")
     return page
 
-#clears form on init or adding any element
+
+# clears form on init or adding any element
 def clear_form():
     st.session_state.form_data = [{
         'text': '',
@@ -367,10 +459,22 @@ def clear_form():
         'res-hp': 100,
         'align': "left",
         'align-index': 0,
+    }, {
+        'frame': False,
+        'width': 100,
+        'align': "fleft",
+        'align-index': 0,
+        'padding': 20,
+        'noBg': True,
+        'bg': '#ffffff',
+        'border': True,
+        'thick': 2,
+        'round': 10,
+        'borderColor': '#000000'
     }]
 
 
-#init
+# init
 if 'type' not in st.session_state:
     st.session_state.type = 'text'
 
@@ -390,22 +494,21 @@ if 'button_pressed' not in st.session_state:
 if 'editing_class' not in st.session_state:
     st.session_state.editing_class = None
 
-
-
-#interface
+# interface
 st.header("HTML constructor")
 
-#adding buttons
+# adding buttons
 with st.container(border=True):
     col1, col2, space, col3 = st.columns([1, 1.2, 14, 2])
     add_text = col1.button("Add text")
     add_image = col2.button("Add image")
-    download = col3.download_button(label="Download HTML code", data=st.session_state.input_page, file_name="page.html", mime='text/html')
+    download = col3.download_button(label="Download HTML code", data=st.session_state.input_page, file_name="page.html",
+                                    mime='text/html')
 
-#main gui
+# main gui
 with st.container():
     explorer, scene, inspector = st.columns([2, 6, 3], gap="medium")
-    #a field with all classes in proj
+    # a field with all classes in proj
     with explorer:
         with st.container(height=685, border=True):
             st.subheader("Explorer")
@@ -432,33 +535,30 @@ with st.container():
                 else:
                     edit = edit.button("Edit")
                     delete = delete.button("Delete")
-    #page
+    # page
     with scene:
         with st.container(height=685, border=True):
             components.html(st.session_state.input_page, height=645, scrolling=True)
 
-    #form with element's parameters
+    # form with element's parameters
     with inspector:
         with st.container(height=685, border=True):
             st.subheader(st.session_state.header)
-
             if st.session_state.type == 'text':
-                image_url = '1'
                 text_to_add = st.text_input("text to add", value=st.session_state.form_data[0]['text'])
-                col1, col2 = st.columns(2)
-                isNoBg = col2.checkbox("no background", value=st.session_state.form_data[0]['noBg'])
-                col3, col4 = st.columns(2)
-                color_text = col3.color_picker("color of text", value=st.session_state.form_data[0]['color'])
-                background = col4.color_picker("background color", value=st.session_state.form_data[0]['bgColor'], disabled=isNoBg)
+                color_text = st.color_picker("color of text", value=st.session_state.form_data[0]['color'])
                 isBold = st.checkbox("Bold", value=st.session_state.form_data[0]['isBold'])
                 isItalic = st.checkbox("Italic", value=st.session_state.form_data[0]['isItalic'])
                 isUnder = st.checkbox("Underlined", value=st.session_state.form_data[0]['isUnder'])
-                text_size = st.number_input("Enter text size", min_value=1, max_value=96, value=st.session_state.form_data[0]['size'])
-                alignment = st.selectbox("Select text alignment", ["left", "center", "right"], index=st.session_state.form_data[0]['align-index'], key=st.session_state.form_data[0]['align'])
+                text_size = st.number_input("Enter text size", min_value=1, max_value=96,
+                                            value=st.session_state.form_data[0]['size'])
+                alignment = st.selectbox("Select text alignment", ["left", "center", "right"],
+                                         index=st.session_state.form_data[0]['align-index'],
+                                         key=st.session_state.form_data[0]['align'])
 
             elif st.session_state.type == 'image':
                 image_url = st.text_input("url of image", value=st.session_state.form_data[1]['url'])
-                if image_url != '':
+                if is_image_url(image_url):
                     get_image_dimensions(image_url)
                     col1, col2 = st.columns(2)
                     isNative = col1.checkbox("native size", value=st.session_state.form_data[1]['native'])
@@ -468,69 +568,144 @@ with st.container():
                         st.session_state.form_data[1]['res-wp'] = 100
                         st.session_state.form_data[1]['res-hp'] = 100
                         st.session_state.form_data[1]['keep_props'] = True
-                    resolution_type = col2.selectbox("set size type", ["px", "%"], index=st.session_state.form_data[1]['rt-index'], key=st.session_state.form_data[1]['rt'], disabled=isNative)
+                    resolution_type = col2.selectbox("set size type", ["px", "%"],
+                                                     index=st.session_state.form_data[1]['rt-index'],
+                                                     key=st.session_state.form_data[1]['rt'], disabled=isNative)
                     col3, col4, col5 = st.columns(3)
 
-                    keepProps = col1.checkbox("keep proportions", value=st.session_state.form_data[1]['keep_props'], disabled=isNative)
+                    keepProps = col1.checkbox("keep proportions", value=st.session_state.form_data[1]['keep_props'],
+                                              disabled=isNative)
                     if keepProps:
                         dimension = col4.selectbox("Select dimension to adjust", ["Width", "Height"])
                         if resolution_type == '%':
                             prop = st.session_state.form_data[1]['res-wp'] / st.session_state.form_data[1]['res-hp']
                             if dimension == "Width":
-                                resolution_width = col5.number_input("width", min_value=1, max_value=200, value=st.session_state.form_data[1]['res-wp'], disabled=isNative)
+                                resolution_width = col5.number_input("width", min_value=1, max_value=200,
+                                                                     value=st.session_state.form_data[1]['res-wp'],
+                                                                     disabled=isNative)
                                 st.session_state.form_data[1]['res-wp'] = resolution_width
-                                st.session_state.form_data[1]['res-hp'] = round(st.session_state.form_data[1]['res-wp'] / prop)
+                                st.session_state.form_data[1]['res-hp'] = round(
+                                    st.session_state.form_data[1]['res-wp'] / prop)
                             else:
-                                resolution_height = col5.number_input("height", min_value=1, max_value=200, value=st.session_state.form_data[1]['res-hp'], disabled=isNative)
+                                resolution_height = col5.number_input("height", min_value=1, max_value=200,
+                                                                      value=st.session_state.form_data[1]['res-hp'],
+                                                                      disabled=isNative)
                                 st.session_state.form_data[1]['res-hp'] = resolution_height
-                                st.session_state.form_data[1]['res-wp'] = round(st.session_state.form_data[1]['res-hp'] * prop)
-                            st.session_state.form_data[1]['res-w'] = round(st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp'] / 100)
-                            st.session_state.form_data[1]['res-h'] = round(st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
+                                st.session_state.form_data[1]['res-wp'] = round(
+                                    st.session_state.form_data[1]['res-hp'] * prop)
+                            st.session_state.form_data[1]['res-w'] = round(
+                                st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp'] / 100)
+                            st.session_state.form_data[1]['res-h'] = round(
+                                st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
                         else:
                             prop = st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['res-h']
                             if dimension == "Width":
-                                resolution_width = col5.number_input("width", min_value=1, max_value=5000, value=st.session_state.form_data[1]['res-w'], disabled=isNative)
+                                resolution_width = col5.number_input("width", min_value=1, max_value=5000,
+                                                                     value=st.session_state.form_data[1]['res-w'],
+                                                                     disabled=isNative)
                                 st.session_state.form_data[1]['res-w'] = resolution_width
-                                st.session_state.form_data[1]['res-h'] = round(st.session_state.form_data[1]['res-w'] / prop)
+                                st.session_state.form_data[1]['res-h'] = round(
+                                    st.session_state.form_data[1]['res-w'] / prop)
                             else:
-                                resolution_height = col5.number_input("height", min_value=1, max_value=5000, value=st.session_state.form_data[1]['res-h'], disabled=isNative)
+                                resolution_height = col5.number_input("height", min_value=1, max_value=5000,
+                                                                      value=st.session_state.form_data[1]['res-h'],
+                                                                      disabled=isNative)
                                 st.session_state.form_data[1]['res-h'] = resolution_height
-                                st.session_state.form_data[1]['res-w'] = round(st.session_state.form_data[1]['res-h'] * prop)
-                            st.session_state.form_data[1]['res-wp'] = round(st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
-                            st.session_state.form_data[1]['res-hp'] = round(st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
+                                st.session_state.form_data[1]['res-w'] = round(
+                                    st.session_state.form_data[1]['res-h'] * prop)
+                            st.session_state.form_data[1]['res-wp'] = round(
+                                st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
+                            st.session_state.form_data[1]['res-hp'] = round(
+                                st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
                     else:
                         if resolution_type == '%':
-                            resolution_width = col4.number_input("width", min_value=1, max_value=200, value=st.session_state.form_data[1]['res-wp'], disabled=isNative)
-                            resolution_height = col5.number_input("height", min_value=1, max_value=200, value=st.session_state.form_data[1]['res-hp'], disabled=isNative)
+                            resolution_width = col4.number_input("width", min_value=1, max_value=200,
+                                                                 value=st.session_state.form_data[1]['res-wp'],
+                                                                 disabled=isNative)
+                            resolution_height = col5.number_input("height", min_value=1, max_value=200,
+                                                                  value=st.session_state.form_data[1]['res-hp'],
+                                                                  disabled=isNative)
                             st.session_state.form_data[1]['res-wp'] = resolution_width
                             st.session_state.form_data[1]['res-hp'] = resolution_height
-                            st.session_state.form_data[1]['res-w'] = round(st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp']/100)
-                            st.session_state.form_data[1]['res-h'] = round(st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
+                            st.session_state.form_data[1]['res-w'] = round(
+                                st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp'] / 100)
+                            st.session_state.form_data[1]['res-h'] = round(
+                                st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
                         else:
-                            resolution_width = col4.number_input("width", min_value=1, max_value=5000, value=st.session_state.form_data[1]['res-w'], disabled=isNative)
+                            resolution_width = col4.number_input("width", min_value=1, max_value=5000,
+                                                                 value=st.session_state.form_data[1]['res-w'],
+                                                                 disabled=isNative)
                             st.session_state.form_data[1]['res-w'] = resolution_width
-                            resolution_height = col5.number_input("height", min_value=1, max_value=5000, value=st.session_state.form_data[1]['res-h'], disabled=isNative)
+                            resolution_height = col5.number_input("height", min_value=1, max_value=5000,
+                                                                  value=st.session_state.form_data[1]['res-h'],
+                                                                  disabled=isNative)
                             st.session_state.form_data[1]['res-h'] = resolution_height
-                            st.session_state.form_data[1]['res-wp'] = round(st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
-                            st.session_state.form_data[1]['res-hp'] = round(st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
+                            st.session_state.form_data[1]['res-wp'] = round(
+                                st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
+                            st.session_state.form_data[1]['res-hp'] = round(
+                                st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
 
-                    alignment = st.selectbox("Select image alignment", ["left", "center", "right"], index=st.session_state.form_data[1]['align-index'], key=st.session_state.form_data[1]['align'])
+                    alignment = st.selectbox("Select image alignment", ["left", "center", "right"],
+                                             index=st.session_state.form_data[1]['align-index'],
+                                             key=st.session_state.form_data[1]['align'])
                 else:
-                    submit_fake = st.button("Submit image")
-            submit = st.button("Submit", disabled=(image_url == ''))
+                    if image_url == '':
+                        st.write("Url field is empty")
+                    else:
+                        st.write("It's invalid url")
+
+            isFrame = st.checkbox("Add frame", value=st.session_state.form_data[2]['frame'])
+            if isFrame:
+                if st.session_state.type == 'text':
+                    width = st.slider("Width", min_value=1, max_value=100, value=st.session_state.form_data[2]['width'])
+                elif st.session_state.type == 'image':
+                    if resolution_type == "px":
+                        st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-w']
+                        width = st.slider("Width", min_value=st.session_state.form_data[1]['res-w'], max_value=5000, value=st.session_state.form_data[2]['width'])
+                    else:
+                        st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-wp']
+                        width = st.slider("Width", min_value=st.session_state.form_data[1]['res-wp'], max_value=200, value=st.session_state.form_data[2]['width'])
+                frame_alignment = st.selectbox("Select frame alignment", ["left", "center", "right"],
+                                               index=st.session_state.form_data[2]['align-index'],
+                                               key=st.session_state.form_data[2]['align'])
+                padding = st.slider("Padding", min_value=1, max_value=200,
+                                    value=st.session_state.form_data[2]['padding'])
+                col6, col7 = st.columns(2)
+                isNoBg = col6.checkbox("no background", value=st.session_state.form_data[2]['noBg'])
+                background = col7.color_picker("background color", value=st.session_state.form_data[2]['bg'],
+                                               disabled=isNoBg)
+
+                col8, col9 = st.columns(2)
+                hasBorder = col8.checkbox("Add border", value=st.session_state.form_data[2]['border'])
+                borderColor = col9.color_picker("Border color", value=st.session_state.form_data[2]['borderColor'],
+                                                disabled=not hasBorder)
+                thickness = st.slider("Border thickness", min_value=0, max_value=20,
+                                      value=st.session_state.form_data[2]['thick'], disabled=not hasBorder)
+                rounding = st.slider("Border rounding", min_value=0, max_value=20,
+                                     value=st.session_state.form_data[2]['round'], disabled=not hasBorder)
+
+            if st.session_state.type == 'image':
+                submit = st.button("Submit", disabled=not is_image_url(image_url))
+            else:
+                submit = st.button("Submit")
             if submit:
                 if not st.session_state.edit_mode:
                     st.session_state.input_page = add_class(st.session_state.input_page, st.session_state.type)
+                    clear_form()
                     st.rerun()
                 else:
-                    st.session_state.input_page = edit_class(st.session_state.input_page, st.session_state.type, st.session_state.editing_class)
+                    st.session_state.input_page = edit_class(st.session_state.input_page, st.session_state.type,
+                                                             st.session_state.editing_class)
                     st.rerun()
 
-#button pressing checks
+# button pressing checks
 if delete:
     if st.session_state.editing_class is not None:
         html, css = find_html_and_css(st.session_state.input_page, st.session_state.editing_class)
         st.session_state.input_page = delete_class(st.session_state.input_page, html, css)
+        if st.session_state.editing_class.startswith('i'):
+            html, css = find_html_and_css(st.session_state.input_page, st.session_state.editing_class + ' img')
+            st.session_state.input_page = delete_class(st.session_state.input_page, html, css)
         st.session_state.editing_class = None
         st.session_state.edit_mode = False
         clear_form()
