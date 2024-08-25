@@ -28,6 +28,18 @@ if 'input_page' not in st.session_state:
 </html>"""
 
 
+# gets ready components
+def fetch_components():
+    try:
+        response = requests.get('http://127.0.0.1:8000/api/components/')
+        response.raise_for_status()
+        st.session_state.not_working = False
+        return response.json()
+    except RequestException:
+        st.session_state.not_working = True
+        return []
+
+
 # gets original image resolution
 def get_image_dimensions(url):
     if url != '':
@@ -94,8 +106,8 @@ def get_class_params(page, edited_class, type):
             'align-index': align_index
         }
     elif type == 'image':
-        html = html[html.find("src"):]
-        url = html[html.find("src") + 4:html.find('>')]
+        html = html[html.find("config"):]
+        url = html[html.find("config") + 4:html.find('>')]
         get_image_dimensions(url)
         orig_w = st.session_state.form_data[1]['orig_w']
         orig_h = st.session_state.form_data[1]['orig_h']
@@ -116,7 +128,7 @@ def get_class_params(page, edited_class, type):
             if css.find('padding') > 0:
                 width_str = css[css.find('width:'):]
                 frame_res_wp = int(width_str[width_str.find("width:") + 6:width_str.find("%")])
-                res_wp = round(100/frame_res_wp*res_wp)
+                res_wp = round(100 / frame_res_wp * res_wp)
             css2 = css2[css2.find("%") + 2:]
             print(css2)
             res_hp = int(css2[css2.find("height:") + 7:css2.find("%")])
@@ -314,11 +326,11 @@ def create_text(text, color, bold, italic, under, size, align):
 # creates image element with form parameters
 def create_image(url, rt, res_w, res_h, align):
     css_string = f"\ttext-align: {align};\n"
-    string = f'<img src={url}>'
+    string = f'<img config={url}>'
     css_image = ''
     if not isNative:
         if isFrame and rt == '%':
-            css_image = f"\twidth: {round(100/width*res_w)}%;\n\theight: {res_h}%;\n"
+            css_image = f"\twidth: {round(100 / width * res_w)}%;\n\theight: {res_h}%;\n"
         else:
             css_image = f"\twidth: {res_w}{rt};\n\theight: {res_h}{rt};\n"
     if isFrame:
@@ -387,7 +399,7 @@ def add_class(page, type):
     new_html = f"\t<div class={new_class}>\n\t\t{new_html}\n\t</div>\n</body>"
     page = page.replace("</style>", new_css)
     page = page.replace("</body>", new_html)
-    if image_css is not None:
+    if type == 'image':
         image_css = f".{new_class} img" + "{\n" + image_css + "}\n</style>"
         page = page.replace("</style>", image_css)
 
@@ -429,6 +441,40 @@ def edit_class(page, type, edited_class):
 def delete_class(page, html, css):
     page = page.replace(css, "")
     page = page.replace(html, "")
+    return page
+
+
+def create_ready_class(type, html, css):
+    global classes
+
+    new_class = 0
+    if type == 'text':
+        new_class = 'p0'
+        for i in range(len(classes) - 1, -1, -1):
+            if classes[i].startswith("p"):
+                new_class = 'p' + str(int(classes[i][1:]) + 1)
+                break
+    elif type == 'image':
+        new_class = 'i0'
+        for i in range(len(classes) - 1, -1, -1):
+            if classes[i].startswith("i"):
+                new_class = 'i' + str(int(classes[i][1:]) + 1)
+                break
+    if type == 'image':
+        css_copy = css
+        css = css_copy[:css_copy.find('&')]
+        css_img = css_copy[css_copy.find('&') + 3:]
+    css = f".{new_class}" + "{\n\t" + css + "}\n"
+    html = f"\t<div class={new_class}>\n\t\t{html}\n\t</div>\n"
+    if type == 'image':
+        css += f".{new_class} img" + "{\n\t" + css_img + "\n}\n"
+    return new_class, html, css
+
+
+def add_ready_class(page, new_class, html, css):
+    page = page.replace("</style>", css + '</style>')
+    page = page.replace("</body>", html + '</body>')
+    classes.append(new_class)
     return page
 
 
@@ -489,6 +535,13 @@ if not st.session_state.edit_mode:
     if st.session_state.type == 'image':
         st.session_state.header = "Add image"
 
+if 'choose_element' not in st.session_state:
+    st.session_state.choose_element = False
+if 'not_working' not in st.session_state:
+    st.session_state.not_working = False
+if 'custom_elements' not in st.session_state or st.session_state.not_working:
+    st.session_state.custom_elements = None
+
 if 'button_pressed' not in st.session_state:
     st.session_state.button_pressed = None
 if 'editing_class' not in st.session_state:
@@ -499,10 +552,11 @@ st.header("HTML constructor")
 
 # adding buttons
 with st.container(border=True):
-    col1, col2, space, col3 = st.columns([1, 1.2, 14, 2])
+    col1, col2, col3, space, col4 = st.columns([1, 1.2, 2.2, 11.8, 2])
     add_text = col1.button("Add text")
     add_image = col2.button("Add image")
-    download = col3.download_button(label="Download HTML code", data=st.session_state.input_page, file_name="page.html",
+    custom_el = col3.button("Choose custom element")
+    download = col4.download_button(label="Download HTML code", data=st.session_state.input_page, file_name="page.html",
                                     mime='text/html')
 
 # main gui
@@ -543,160 +597,198 @@ with st.container():
     # form with element's parameters
     with inspector:
         with st.container(height=685, border=True):
-            st.subheader(st.session_state.header)
-            if st.session_state.type == 'text':
-                text_to_add = st.text_input("text to add", value=st.session_state.form_data[0]['text'])
-                color_text = st.color_picker("color of text", value=st.session_state.form_data[0]['color'])
-                isBold = st.checkbox("Bold", value=st.session_state.form_data[0]['isBold'])
-                isItalic = st.checkbox("Italic", value=st.session_state.form_data[0]['isItalic'])
-                isUnder = st.checkbox("Underlined", value=st.session_state.form_data[0]['isUnder'])
-                text_size = st.number_input("Enter text size", min_value=1, max_value=96,
-                                            value=st.session_state.form_data[0]['size'])
-                alignment = st.selectbox("Select text alignment", ["left", "center", "right"],
-                                         index=st.session_state.form_data[0]['align-index'],
-                                         key=st.session_state.form_data[0]['align'])
+            if not st.session_state.choose_element:
+                st.subheader(st.session_state.header)
+                if st.session_state.type == 'text':
+                    text_to_add = st.text_input("text to add", value=st.session_state.form_data[0]['text'])
+                    color_text = st.color_picker("color of text", value=st.session_state.form_data[0]['color'])
+                    isBold = st.checkbox("Bold", value=st.session_state.form_data[0]['isBold'])
+                    isItalic = st.checkbox("Italic", value=st.session_state.form_data[0]['isItalic'])
+                    isUnder = st.checkbox("Underlined", value=st.session_state.form_data[0]['isUnder'])
+                    text_size = st.number_input("Enter text size", min_value=1, max_value=96,
+                                                value=st.session_state.form_data[0]['size'])
+                    alignment = st.selectbox("Select text alignment", ["left", "center", "right"],
+                                             index=st.session_state.form_data[0]['align-index'],
+                                             key=st.session_state.form_data[0]['align'])
 
-            elif st.session_state.type == 'image':
-                image_url = st.text_input("url of image", value=st.session_state.form_data[1]['url'])
-                if is_image_url(image_url):
-                    get_image_dimensions(image_url)
-                    col1, col2 = st.columns(2)
-                    isNative = col1.checkbox("native size", value=st.session_state.form_data[1]['native'])
-                    if isNative:
-                        st.session_state.form_data[1]['res-w'] = st.session_state.form_data[1]['orig-w']
-                        st.session_state.form_data[1]['res-h'] = st.session_state.form_data[1]['orig-h']
-                        st.session_state.form_data[1]['res-wp'] = 100
-                        st.session_state.form_data[1]['res-hp'] = 100
-                        st.session_state.form_data[1]['keep_props'] = True
-                    resolution_type = col2.selectbox("set size type", ["px", "%"],
-                                                     index=st.session_state.form_data[1]['rt-index'],
-                                                     key=st.session_state.form_data[1]['rt'], disabled=isNative)
-                    col3, col4, col5 = st.columns(3)
+                elif st.session_state.type == 'image':
+                    image_url = st.text_input("url of image", value=st.session_state.form_data[1]['url'])
+                    if is_image_url(image_url):
+                        get_image_dimensions(image_url)
+                        col1, col2 = st.columns(2)
+                        isNative = col1.checkbox("native size", value=st.session_state.form_data[1]['native'])
+                        if isNative:
+                            st.session_state.form_data[1]['res-w'] = st.session_state.form_data[1]['orig-w']
+                            st.session_state.form_data[1]['res-h'] = st.session_state.form_data[1]['orig-h']
+                            st.session_state.form_data[1]['res-wp'] = 100
+                            st.session_state.form_data[1]['res-hp'] = 100
+                            st.session_state.form_data[1]['keep_props'] = True
+                        resolution_type = col2.selectbox("set size type", ["px", "%"],
+                                                         index=st.session_state.form_data[1]['rt-index'],
+                                                         key=st.session_state.form_data[1]['rt'], disabled=isNative)
+                        col3, col4, col5 = st.columns(3)
 
-                    keepProps = col1.checkbox("keep proportions", value=st.session_state.form_data[1]['keep_props'],
-                                              disabled=isNative)
-                    if keepProps:
-                        dimension = col4.selectbox("Select dimension to adjust", ["Width", "Height"])
-                        if resolution_type == '%':
-                            prop = st.session_state.form_data[1]['res-wp'] / st.session_state.form_data[1]['res-hp']
-                            if dimension == "Width":
-                                resolution_width = col5.number_input("width", min_value=1, max_value=200,
+                        keepProps = col1.checkbox("keep proportions", value=st.session_state.form_data[1]['keep_props'],
+                                                  disabled=isNative)
+                        if keepProps:
+                            dimension = col4.selectbox("Select dimension to adjust", ["Width", "Height"])
+                            if resolution_type == '%':
+                                prop = st.session_state.form_data[1]['res-wp'] / st.session_state.form_data[1]['res-hp']
+                                if dimension == "Width":
+                                    resolution_width = col5.number_input("width", min_value=1, max_value=200,
+                                                                         value=st.session_state.form_data[1]['res-wp'],
+                                                                         disabled=isNative)
+                                    st.session_state.form_data[1]['res-wp'] = resolution_width
+                                    st.session_state.form_data[1]['res-hp'] = round(
+                                        st.session_state.form_data[1]['res-wp'] / prop)
+                                else:
+                                    resolution_height = col5.number_input("height", min_value=1, max_value=200,
+                                                                          value=st.session_state.form_data[1]['res-hp'],
+                                                                          disabled=isNative)
+                                    st.session_state.form_data[1]['res-hp'] = resolution_height
+                                    st.session_state.form_data[1]['res-wp'] = round(
+                                        st.session_state.form_data[1]['res-hp'] * prop)
+                                st.session_state.form_data[1]['res-w'] = round(
+                                    st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1][
+                                        'res-wp'] / 100)
+                                st.session_state.form_data[1]['res-h'] = round(
+                                    st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1][
+                                        'res-hp'] / 100)
+                            else:
+                                prop = st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['res-h']
+                                if dimension == "Width":
+                                    resolution_width = col5.number_input("width", min_value=1, max_value=5000,
+                                                                         value=st.session_state.form_data[1]['res-w'],
+                                                                         disabled=isNative)
+                                    st.session_state.form_data[1]['res-w'] = resolution_width
+                                    st.session_state.form_data[1]['res-h'] = round(
+                                        st.session_state.form_data[1]['res-w'] / prop)
+                                else:
+                                    resolution_height = col5.number_input("height", min_value=1, max_value=5000,
+                                                                          value=st.session_state.form_data[1]['res-h'],
+                                                                          disabled=isNative)
+                                    st.session_state.form_data[1]['res-h'] = resolution_height
+                                    st.session_state.form_data[1]['res-w'] = round(
+                                        st.session_state.form_data[1]['res-h'] * prop)
+                                st.session_state.form_data[1]['res-wp'] = round(
+                                    st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1][
+                                        'orig-w'] * 100)
+                                st.session_state.form_data[1]['res-hp'] = round(
+                                    st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1][
+                                        'orig-h'] * 100)
+                        else:
+                            if resolution_type == '%':
+                                resolution_width = col4.number_input("width", min_value=1, max_value=200,
                                                                      value=st.session_state.form_data[1]['res-wp'],
                                                                      disabled=isNative)
-                                st.session_state.form_data[1]['res-wp'] = resolution_width
-                                st.session_state.form_data[1]['res-hp'] = round(
-                                    st.session_state.form_data[1]['res-wp'] / prop)
-                            else:
                                 resolution_height = col5.number_input("height", min_value=1, max_value=200,
                                                                       value=st.session_state.form_data[1]['res-hp'],
                                                                       disabled=isNative)
+                                st.session_state.form_data[1]['res-wp'] = resolution_width
                                 st.session_state.form_data[1]['res-hp'] = resolution_height
-                                st.session_state.form_data[1]['res-wp'] = round(
-                                    st.session_state.form_data[1]['res-hp'] * prop)
-                            st.session_state.form_data[1]['res-w'] = round(
-                                st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp'] / 100)
-                            st.session_state.form_data[1]['res-h'] = round(
-                                st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
-                        else:
-                            prop = st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['res-h']
-                            if dimension == "Width":
-                                resolution_width = col5.number_input("width", min_value=1, max_value=5000,
+                                st.session_state.form_data[1]['res-w'] = round(
+                                    st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1][
+                                        'res-wp'] / 100)
+                                st.session_state.form_data[1]['res-h'] = round(
+                                    st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1][
+                                        'res-hp'] / 100)
+                            else:
+                                resolution_width = col4.number_input("width", min_value=1, max_value=5000,
                                                                      value=st.session_state.form_data[1]['res-w'],
                                                                      disabled=isNative)
                                 st.session_state.form_data[1]['res-w'] = resolution_width
-                                st.session_state.form_data[1]['res-h'] = round(
-                                    st.session_state.form_data[1]['res-w'] / prop)
-                            else:
                                 resolution_height = col5.number_input("height", min_value=1, max_value=5000,
                                                                       value=st.session_state.form_data[1]['res-h'],
                                                                       disabled=isNative)
                                 st.session_state.form_data[1]['res-h'] = resolution_height
-                                st.session_state.form_data[1]['res-w'] = round(
-                                    st.session_state.form_data[1]['res-h'] * prop)
-                            st.session_state.form_data[1]['res-wp'] = round(
-                                st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
-                            st.session_state.form_data[1]['res-hp'] = round(
-                                st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
+                                st.session_state.form_data[1]['res-wp'] = round(
+                                    st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1][
+                                        'orig-w'] * 100)
+                                st.session_state.form_data[1]['res-hp'] = round(
+                                    st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1][
+                                        'orig-h'] * 100)
+
+                        alignment = st.selectbox("Select image alignment", ["left", "center", "right"],
+                                                 index=st.session_state.form_data[1]['align-index'],
+                                                 key=st.session_state.form_data[1]['align'])
                     else:
-                        if resolution_type == '%':
-                            resolution_width = col4.number_input("width", min_value=1, max_value=200,
-                                                                 value=st.session_state.form_data[1]['res-wp'],
-                                                                 disabled=isNative)
-                            resolution_height = col5.number_input("height", min_value=1, max_value=200,
-                                                                  value=st.session_state.form_data[1]['res-hp'],
-                                                                  disabled=isNative)
-                            st.session_state.form_data[1]['res-wp'] = resolution_width
-                            st.session_state.form_data[1]['res-hp'] = resolution_height
-                            st.session_state.form_data[1]['res-w'] = round(
-                                st.session_state.form_data[1]['orig-w'] * st.session_state.form_data[1]['res-wp'] / 100)
-                            st.session_state.form_data[1]['res-h'] = round(
-                                st.session_state.form_data[1]['orig-h'] * st.session_state.form_data[1]['res-hp'] / 100)
+                        if image_url == '':
+                            st.write("Url field is empty")
                         else:
-                            resolution_width = col4.number_input("width", min_value=1, max_value=5000,
-                                                                 value=st.session_state.form_data[1]['res-w'],
-                                                                 disabled=isNative)
-                            st.session_state.form_data[1]['res-w'] = resolution_width
-                            resolution_height = col5.number_input("height", min_value=1, max_value=5000,
-                                                                  value=st.session_state.form_data[1]['res-h'],
-                                                                  disabled=isNative)
-                            st.session_state.form_data[1]['res-h'] = resolution_height
-                            st.session_state.form_data[1]['res-wp'] = round(
-                                st.session_state.form_data[1]['res-w'] / st.session_state.form_data[1]['orig-w'] * 100)
-                            st.session_state.form_data[1]['res-hp'] = round(
-                                st.session_state.form_data[1]['res-h'] / st.session_state.form_data[1]['orig-h'] * 100)
+                            st.write("It's invalid url")
 
-                    alignment = st.selectbox("Select image alignment", ["left", "center", "right"],
-                                             index=st.session_state.form_data[1]['align-index'],
-                                             key=st.session_state.form_data[1]['align'])
+                isFrame = st.checkbox("Add frame", value=st.session_state.form_data[2]['frame'])
+                if isFrame:
+                    if st.session_state.type == 'text':
+                        width = st.slider("Width", min_value=1, max_value=100,
+                                          value=st.session_state.form_data[2]['width'])
+                    elif st.session_state.type == 'image':
+                        if resolution_type == "px":
+                            st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-w']
+                            width = st.slider("Width", min_value=st.session_state.form_data[1]['res-w'], max_value=5000,
+                                              value=st.session_state.form_data[2]['width'])
+                        else:
+                            st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-wp']
+                            width = st.slider("Width", min_value=st.session_state.form_data[1]['res-wp'], max_value=200,
+                                              value=st.session_state.form_data[2]['width'])
+                    frame_alignment = st.selectbox("Select frame alignment", ["left", "center", "right"],
+                                                   index=st.session_state.form_data[2]['align-index'],
+                                                   key=st.session_state.form_data[2]['align'])
+                    padding = st.slider("Padding", min_value=1, max_value=200,
+                                        value=st.session_state.form_data[2]['padding'])
+                    col6, col7 = st.columns(2)
+                    isNoBg = col6.checkbox("no background", value=st.session_state.form_data[2]['noBg'])
+                    background = col7.color_picker("background color", value=st.session_state.form_data[2]['bg'],
+                                                   disabled=isNoBg)
+
+                    col8, col9 = st.columns(2)
+                    hasBorder = col8.checkbox("Add border", value=st.session_state.form_data[2]['border'])
+                    borderColor = col9.color_picker("Border color", value=st.session_state.form_data[2]['borderColor'],
+                                                    disabled=not hasBorder)
+                    thickness = st.slider("Border thickness", min_value=0, max_value=20,
+                                          value=st.session_state.form_data[2]['thick'], disabled=not hasBorder)
+                    rounding = st.slider("Border rounding", min_value=0, max_value=20,
+                                         value=st.session_state.form_data[2]['round'], disabled=not hasBorder)
+
+                if st.session_state.type == 'image':
+                    submit = st.button("Submit", disabled=not is_image_url(image_url))
                 else:
-                    if image_url == '':
-                        st.write("Url field is empty")
+                    submit = st.button("Submit")
+                if submit:
+                    if not st.session_state.edit_mode:
+                        st.session_state.input_page = add_class(st.session_state.input_page, st.session_state.type)
+                        clear_form()
+                        st.rerun()
                     else:
-                        st.write("It's invalid url")
+                        st.session_state.input_page = edit_class(st.session_state.input_page, st.session_state.type,
+                                                                 st.session_state.editing_class)
+                        st.rerun()
 
-            isFrame = st.checkbox("Add frame", value=st.session_state.form_data[2]['frame'])
-            if isFrame:
-                if st.session_state.type == 'text':
-                    width = st.slider("Width", min_value=1, max_value=100, value=st.session_state.form_data[2]['width'])
-                elif st.session_state.type == 'image':
-                    if resolution_type == "px":
-                        st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-w']
-                        width = st.slider("Width", min_value=st.session_state.form_data[1]['res-w'], max_value=5000, value=st.session_state.form_data[2]['width'])
-                    else:
-                        st.session_state.form_data[2]['width'] = st.session_state.form_data[1]['res-wp']
-                        width = st.slider("Width", min_value=st.session_state.form_data[1]['res-wp'], max_value=200, value=st.session_state.form_data[2]['width'])
-                frame_alignment = st.selectbox("Select frame alignment", ["left", "center", "right"],
-                                               index=st.session_state.form_data[2]['align-index'],
-                                               key=st.session_state.form_data[2]['align'])
-                padding = st.slider("Padding", min_value=1, max_value=200,
-                                    value=st.session_state.form_data[2]['padding'])
-                col6, col7 = st.columns(2)
-                isNoBg = col6.checkbox("no background", value=st.session_state.form_data[2]['noBg'])
-                background = col7.color_picker("background color", value=st.session_state.form_data[2]['bg'],
-                                               disabled=isNoBg)
-
-                col8, col9 = st.columns(2)
-                hasBorder = col8.checkbox("Add border", value=st.session_state.form_data[2]['border'])
-                borderColor = col9.color_picker("Border color", value=st.session_state.form_data[2]['borderColor'],
-                                                disabled=not hasBorder)
-                thickness = st.slider("Border thickness", min_value=0, max_value=20,
-                                      value=st.session_state.form_data[2]['thick'], disabled=not hasBorder)
-                rounding = st.slider("Border rounding", min_value=0, max_value=20,
-                                     value=st.session_state.form_data[2]['round'], disabled=not hasBorder)
-
-            if st.session_state.type == 'image':
-                submit = st.button("Submit", disabled=not is_image_url(image_url))
             else:
-                submit = st.button("Submit")
-            if submit:
-                if not st.session_state.edit_mode:
-                    st.session_state.input_page = add_class(st.session_state.input_page, st.session_state.type)
-                    clear_form()
-                    st.rerun()
+                if not st.session_state.not_working and st.session_state.custom_elements is not None:
+                    for i in range(1, len(st.session_state.custom_elements) + 1):
+                        with st.container(border=True):
+                            new_class, html, css = create_ready_class(st.session_state.custom_elements[i - 1]['type'],
+                                                                      st.session_state.custom_elements[i - 1][
+                                                                          'html_content'],
+                                                                      st.session_state.custom_elements[i - 1][
+                                                                          'css_content'])
+                            st.subheader('Preview')
+                            # print(f'<style>\n{css}\n</style>\n<body>\n{html}\n</body>')
+                            st.components.v1.html(html=f'<style>\n{css}\n</style>\n<body>\n{html}\n</body>', width=390,
+                                                  scrolling=True)
+                            if st.button('Add', key=i):
+                                new_class, html, css = create_ready_class(
+                                    st.session_state.custom_elements[i - 1]['type'],
+                                    st.session_state.custom_elements[i - 1]['html_content'],
+                                    st.session_state.custom_elements[i - 1]['css_content'])
+                                st.session_state.input_page = add_ready_class(st.session_state.input_page, new_class,
+                                                                              html, css)
+                                st.rerun()
+                elif st.session_state.not_working:
+                    st.subheader("This module doesn't work now")
                 else:
-                    st.session_state.input_page = edit_class(st.session_state.input_page, st.session_state.type,
-                                                             st.session_state.editing_class)
-                    st.rerun()
+                    st.subheader("There are no elements yet")
 
 # button pressing checks
 if delete:
@@ -720,16 +812,25 @@ if edit:
             st.session_state.type = 'image'
         get_class_params(st.session_state.input_page, st.session_state.editing_class, st.session_state.type)
         st.session_state.edit_mode = True
+        st.session_state.choose_element = False
         st.rerun()
 
 if add_text:
     st.session_state.type = 'text'
     st.session_state.editing_class = None
+    st.session_state.choose_element = False
     clear_form()
     st.rerun()
 
 if add_image:
     st.session_state.type = 'image'
     st.session_state.editing_class = None
+    st.session_state.choose_element = False
+    clear_form()
+    st.rerun()
+
+if custom_el:
+    st.session_state.choose_element = True
+    st.session_state.custom_elements = fetch_components()
     clear_form()
     st.rerun()
