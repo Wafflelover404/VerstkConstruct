@@ -774,7 +774,6 @@ with st.container():
                                                                       st.session_state.custom_elements[i - 1][
                                                                           'css_content'])
                             st.subheader('Preview')
-                            # print(f'<style>\n{css}\n</style>\n<body>\n{html}\n</body>')
                             st.components.v1.html(html=f'<style>\n{css}\n</style>\n<body>\n{html}\n</body>', width=390,
                                                   scrolling=True)
                             if st.button('Add', key=i):
